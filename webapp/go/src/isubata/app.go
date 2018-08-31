@@ -303,7 +303,7 @@ func postLogin(c echo.Context) error {
 	}
 
 	var user User
-	err := db.Get(&user, "SELECT * FROM user WHERE name = ?", name)
+	err := db.Get(&user, "SELECT password, salt, id FROM user WHERE name = ?", name)
 	if err == sql.ErrNoRows {
 		return echo.ErrForbidden
 	} else if err != nil {
@@ -660,9 +660,18 @@ func postProfile(c echo.Context) error {
 
 		avatarName = fmt.Sprintf("%x%s", sha1.Sum(avatarData), ext)
 	}
+	avatarFlag := avatarName != "" && len(avatarData) > 0
+	name := c.FormValue("display_name")
+	nameFlag :=  name != ""
+	if avatarFlag && nameFlag {
+		_, err = db.Exec("UPDATE user SET avatar_icon = ?, display_name = ? WHERE id = ?", avatarName, name, self.ID)
+		if err != nil {
+			return err
+		}
+	}
 
-	if avatarName != "" && len(avatarData) > 0 {
-		_, err := db.Exec("INSERT INTO image (name, data) VALUES (?, ?)", avatarName, avatarData)
+	if avatarFlag {
+		err = ioutil.WriteFile("/home/isucon/isubata/webapp/public/icons/"+avatarName, avatarData, 0777)
 		if err != nil {
 			return err
 		}
@@ -672,7 +681,7 @@ func postProfile(c echo.Context) error {
 		}
 	}
 
-	if name := c.FormValue("display_name"); name != "" {
+	if nameFlag {
 		_, err := db.Exec("UPDATE user SET display_name = ? WHERE id = ?", name, self.ID)
 		if err != nil {
 			return err
