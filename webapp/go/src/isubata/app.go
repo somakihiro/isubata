@@ -240,7 +240,7 @@ func getChannel(c echo.Context) error {
 		return err
 	}
 	channels := []ChannelInfo{}
-	err = db.Select(&channels, "SELECT * FROM channel ORDER BY id")
+	err = db.Select(&channels, "SELECT id, name FROM channel ORDER BY id")
 	if err != nil {
 		return err
 	}
@@ -381,7 +381,20 @@ func getMessage(c echo.Context) error {
 		return err
 	}
 
-	messages, err := queryMessages(chanID, lastID)
+	type GetMessageType struct {
+		ID        int64     `db:"id"`
+		Content   string    `db:"content"`
+		CreatedAt time.Time `db:"created_at"`
+
+		Name        string `db:"name"`
+		DisplayName string `db:"display_name"`
+		AvatarIcon  string `db:"avatar_icon"`
+	}
+
+	messages := []GetMessageType{}
+	err = db.Select(&messages, "SELECT message.id, message.content, message.created_at, user.name, user.display_name, user.avatar_icon FROM message join user on message.user_id = user.id WHERE message.id > ? AND channel_id = ? ORDER BY message.id DESC LIMIT 100",
+		lastID, chanID)
+
 	if err != nil {
 		return err
 	}
@@ -389,7 +402,17 @@ func getMessage(c echo.Context) error {
 	response := make([]map[string]interface{}, 0)
 	for i := len(messages) - 1; i >= 0; i-- {
 		m := messages[i]
-		r, err := jsonifyMessage(m)
+
+		r := make(map[string]interface{})
+		r["id"] = m.ID
+		r["user"] = map[string]string{
+			"name":         m.Name,
+			"display_name": m.DisplayName,
+			"avatar_icon":  m.AvatarIcon,
+		}
+		r["date"] = m.CreatedAt.Format("2006/01/02 15:04:05")
+		r["content"] = m.Content
+
 		if err != nil {
 			return err
 		}
@@ -452,21 +475,8 @@ func fetchUnread(c echo.Context) error {
 	resp := []map[string]interface{}{}
 
 	for _, chID := range channels {
-		lastID, err := queryHaveRead(userID, chID)
-		if err != nil {
-			return err
-		}
-
 		var cnt int64
-		if lastID > 0 {
-			err = db.Get(&cnt,
-				"SELECT COUNT(*) as cnt FROM message WHERE channel_id = ? AND ? < id",
-				chID, lastID)
-		} else {
-			err = db.Get(&cnt,
-				"SELECT COUNT(*) as cnt FROM message WHERE channel_id = ?",
-				chID)
-		}
+		err = db.Get(&cnt, "SELECT COUNT(*) from message LEFT OUTER JOIN haveread ON message.channel_id = haveread.channel_id AND haveread.user_id = ? WHERE message.channel_id = ? AND message.id > CASE WHEN haveread.message_id IS NULL THEN 0 ELSE haveread.message_id END;", userID, chID)
 		if err != nil {
 			return err
 		}
@@ -515,17 +525,37 @@ func getHistory(c echo.Context) error {
 		return ErrBadReqeust
 	}
 
-	messages := []Message{}
-	err = db.Select(&messages,
-		"SELECT * FROM message WHERE channel_id = ? ORDER BY id DESC LIMIT ? OFFSET ?",
-		chID, N, (page-1)*N)
+	type GetMessageType struct {
+		ID        int64     `db:"id"`
+		Content   string    `db:"content"`
+		CreatedAt time.Time `db:"created_at"`
+
+		Name        string `db:"name"`
+		DisplayName string `db:"display_name"`
+		AvatarIcon  string `db:"avatar_icon"`
+	}
+
+	messages := []GetMessageType{}
+	err = db.Select(&messages, "SELECT message.id, message.content, message.created_at, user.name, user.display_name, user.avatar_icon FROM message join user on message.user_id = user.id WHERE channel_id = ? ORDER BY message.id DESC LIMIT ? OFFSET ?", chID, N, (page-1)*N)
+
 	if err != nil {
 		return err
 	}
 
 	mjson := make([]map[string]interface{}, 0)
 	for i := len(messages) - 1; i >= 0; i-- {
-		r, err := jsonifyMessage(messages[i])
+		m := messages[i]
+
+		r := make(map[string]interface{})
+		r["id"] = m.ID
+		r["user"] = map[string]string{
+			"Name":        m.Name,
+			"DisplayName": m.DisplayName,
+			"AvatarIcon":  m.AvatarIcon,
+		}
+		r["date"] = m.CreatedAt.Format("2006/01/02 15:04:05")
+		r["content"] = m.Content
+
 		if err != nil {
 			return err
 		}
@@ -533,7 +563,7 @@ func getHistory(c echo.Context) error {
 	}
 
 	channels := []ChannelInfo{}
-	err = db.Select(&channels, "SELECT * FROM channel ORDER BY id")
+	err = db.Select(&channels, "SELECT id, name FROM channel ORDER BY id")
 	if err != nil {
 		return err
 	}
@@ -555,14 +585,14 @@ func getProfile(c echo.Context) error {
 	}
 
 	channels := []ChannelInfo{}
-	err = db.Select(&channels, "SELECT * FROM channel ORDER BY id")
+	err = db.Select(&channels, "SELECT id, name FROM channel ORDER BY id")
 	if err != nil {
 		return err
 	}
 
 	userName := c.Param("user_name")
 	var other User
-	err = db.Get(&other, "SELECT * FROM user WHERE name = ?", userName)
+	err = db.Get(&other, "SELECT id, name, display_name, avatar_icon FROM user WHERE name = ?", userName)
 	if err == sql.ErrNoRows {
 		return echo.ErrNotFound
 	}
